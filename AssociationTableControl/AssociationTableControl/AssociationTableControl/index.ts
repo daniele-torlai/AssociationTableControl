@@ -64,7 +64,9 @@ export class AssociationTableControl implements ComponentFramework.StandardContr
 
 		//Trigger function on check-box change.
 		this._notifyOutputChanged = notifyOutputChanged;
-		this._checkBoxChanged = this.checkBoxChanged.bind(this);
+		var isOOBRelationship = this._context.parameters.isOOBRelationship.raw == "1" ? true : false;
+		this._checkBoxChanged = isOOBRelationship ? this.checkBoxChangedOOBRelationship.bind(this) : this.checkBoxChangedCustomRelationship.bind(this);
+
 		this._selStates = [];
 
 		// @ts-ignore
@@ -101,11 +103,16 @@ export class AssociationTableControl implements ComponentFramework.StandardContr
 		// @ts-ignore
 		var contextInfo = this._context.mode.contextInfo;
 		var recordId = contextInfo.entityId;
+		var isOOBRelationship = this._context.parameters.isOOBRelationship.raw == "1" ? true : false;
 		var lookupTo = this._context.parameters.lookuptoAssociatedTable.raw!.toLowerCase();
 		var lookupFrom = this._context.parameters.lookuptoCurrentTable.raw!.toLowerCase();
-		var result = await this._context.webAPI.retrieveMultipleRecords(this._context.parameters.associationTable.raw!, '?$select= _' + lookupTo + '_value&$filter=_' + lookupFrom + '_value eq ' + recordId);
+		var result = 
+			isOOBRelationship ? await this._context.webAPI.retrieveMultipleRecords(this._context.parameters.associationTable.raw!, '?$select= ' + lookupTo + '&$filter=' + lookupFrom + ' eq ' + recordId) :
+							await this._context.webAPI.retrieveMultipleRecords(this._context.parameters.associationTable.raw!, '?$select= _' + lookupTo + '_value&$filter=_' + lookupFrom + '_value eq ' + recordId);
 		for (var i = 0; i < result.entities.length; i++) {
-			var temp = result.entities[i]["_" + lookupTo + "_value"];
+			var temp = isOOBRelationship ?
+				result.entities[i][lookupTo] :
+				result.entities[i]["_" + lookupTo + "_value"];
 			list.push(temp);
 			var cItem = this._itemList.find((e => e.key === temp));
 			var cState = this._selStates.findIndex(e => e.text === cItem?.parent);
@@ -180,8 +187,64 @@ export class AssociationTableControl implements ComponentFramework.StandardContr
 			swal.fire("getRecords", "Error:" + error.message, "error");
 		}
 	}
+
+	public async checkBoxChangedOOBRelationship(evnt: Event){
+		try{
+			var targetInput = <HTMLInputElement>evnt.target;
+			// @ts-ignore
+			var contextInfo = this._context.mode.contextInfo;
+			var recordId = contextInfo.entityId;
+			var relationshipName = this._context.parameters.relationshipName.raw;
+			var associateRequest = {
+				target: { entityType: contextInfo.entityTypeName, id: recordId },
+				relatedEntities: [
+						{ entityType: this._entityName, id: targetInput.id }
+				],
+				relationship: relationshipName,
+				getMetadata: function () { return { boundParameter: null, parameterTypes: {}, operationType: 2, operationName: "Associate" }; }
+			};
+
+			var actual = 0;
+			var cState = this._selStates.findIndex(e => e.text === targetInput.value);
+			if (cState !== -1)
+				actual = this._selStates[cState].actual;
+			
+			if (targetInput.checked) {
+				await (<any>this._context.webAPI).execute(associateRequest)
+				actual++;
+			}
+			else {
+				await this.deleteRecordOOBRelationship(targetInput.id);
+				actual--;
+			}
+
+			
+		}
+		catch (error) {
+			swal.fire("checkBoxChangedOOBRelationship", "Error:" + error.message , "error");
+		}
+	}
+
+	//Async delete record process called when a check-box is unchecked
+	private async deleteRecordOOBRelationship(targetInput: string) {
+		try {
+			// @ts-ignore
+			var contextInfo = this._context.mode.contextInfo;
+			var recordId = contextInfo.entityId;
+			var relationshipName = this._context.parameters.relationshipName.raw;
+			var disassociateRequest = {
+				target: { entityType: contextInfo.entityTypeName, id: recordId },
+				relatedEntityId : targetInput,
+				relationship: relationshipName,
+				getMetadata: function () { return { boundParameter: null, parameterTypes: {}, operationType: 2, operationName: "Disassociate" }; }
+			};
+			await (<any>this._context.webAPI).execute(disassociateRequest)
+		} catch(error) { 
+			swal.fire("deleteRecordOOBRelationship", "Error:" + error.message, "error");
+		}
+	}
 	
-	public async checkBoxChanged(evnt: Event) {
+	public async checkBoxChangedCustomRelationship(evnt: Event) {
 	try {
 		var targetInput = <HTMLInputElement>evnt.target;
 		// @ts-ignore
@@ -215,27 +278,27 @@ export class AssociationTableControl implements ComponentFramework.StandardContr
 			actual++;
 		}
 		else {
-			await this.deleteRecord(associationTable, lookupToLower, targetInput.id, lookupFromLower, recordId);
+			await this.deleteRecordCustomRelationship(associationTable, lookupToLower, targetInput.id, lookupFromLower, recordId);
 			actual--;
 		}
 	
 		this._notifyOutputChanged();
 		} catch (error) {
-			swal.fire("checkBoxChanged", "Error:" + error.message , "error");
+			swal.fire("checkBoxChangedCustomRelationship", "Error:" + error.message , "error");
 		}
 	}
 
 	//Async delete record process called when a check-box is unchecked
-	private async deleteRecord(associationTable: string, lookupToLower: string, targetInput: string, lookupFromLower: string, recordId: string) {
+	private async deleteRecordCustomRelationship(associationTable: string, lookupToLower: string, targetInput: string, lookupFromLower: string, recordId: string) {
 		let _this = this;
 		try {
-			var result = await this._context.webAPI.retrieveMultipleRecords(associationTable, '?$select=' + associationTable + 'id&$filter=_' + lookupToLower + '_value eq ' + targetInput + ' and _' + lookupFromLower + '_value eq ' + recordId)
+			var result = await this._context.webAPI.retrieveMultipleRecords(associationTable, '?$select=' + associationTable + 'id&$filter=_' + lookupToLower + '_value eq ' + targetInput + ' and _' + lookupFromLower + '_value eq ' + recordId);
 			for (var i = 0; i < result.entities.length; i++) {
 				var linkRecordId = result.entities[i][associationTable + 'id'];
 			}
 			_this._context.webAPI.deleteRecord(associationTable, linkRecordId)
 		} catch(error) { 
-			swal.fire("deleteRecord", "Error:" + error.message, "error");
+			swal.fire("deleteRecordCustomRelationship", "Error:" + error.message, "error");
 		}
 	}
 
